@@ -1,0 +1,9 @@
+- key: cls
+  title: "cls"
+  description: >
+    cls Module
+  fields:
+    - name: cls
+      type: group
+      description: >
+      fields:
