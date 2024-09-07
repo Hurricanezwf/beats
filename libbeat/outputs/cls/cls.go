@@ -4,10 +4,13 @@ package cls
 import (
 	"context"
 	"fmt"
+	"hash/crc64"
+	"math"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/elastic/beats/v7/libbeat/beat"
@@ -65,16 +68,27 @@ type cls struct {
 	codec    codec.Codec
 	config   *clsConfig
 
-	httpcli *http.Client
+	producerID      string
+	autoIncrBatchID uint64
+	httpcli         *http.Client
 }
 
 func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, config *clsConfig) (*cls, error) {
+	// 计算 producer ID, 为了后续支持在腾讯云上进行日志上下文查询.
+	nodeIP := os.Getenv(config.NodeIPEnv)
+	if nodeIP == "" {
+		return nil, fmt.Errorf("empty nodeIP from env %s", config.NodeIPEnv)
+	}
+	producerID := generateProducerHash(fmt.Sprintf("%s-%d", nodeIP, time.Now().UnixNano()))
+
 	return &cls{
-		log:      logp.NewLogger(logSelector),
-		observer: observer,
-		index:    strings.ToLower(index),
-		codec:    encoder,
-		config:   config,
+		log:             logp.NewLogger(logSelector),
+		observer:        observer,
+		index:           strings.ToLower(index),
+		codec:           encoder,
+		config:          config,
+		producerID:      producerID,
+		autoIncrBatchID: 0,
 		httpcli: &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
@@ -104,46 +118,55 @@ func (c *cls) Publish(_ context.Context, batch publisher.Batch) error {
 	events := batch.Events()
 	c.observer.NewBatch(len(events))
 
-	dropped := 0
-	for i := range events {
-		ok := c.publishEvent(&events[i])
-		if !ok {
-			dropped++
+	packageID := c.generatePackageID()
+
+	var decision string
+	var err error
+	for i := 0; i < c.config.MaxRetries+1; i++ {
+		if decision, err = c.publishEvents(events, packageID); err == nil {
+			batch.ACK()
+			c.observer.Acked(len(events))
+			return nil
 		}
+		time.Sleep(time.Second)
 	}
 
-	//c.writer.Flush()
-	batch.ACK()
-
-	c.observer.Dropped(dropped)
-	c.observer.Acked(len(events) - dropped)
-
-	return nil
+	switch decision {
+	case "ack":
+		batch.ACK()
+		c.observer.Acked(len(events))
+	case "drop":
+		batch.Drop()
+		c.observer.Dropped(len(events))
+	case "retry":
+		batch.Retry()
+		c.observer.Failed(len(events))
+	}
+	return fmt.Errorf("unknown decision %s returned", decision)
 }
 
-func (c *cls) publishEvent(event *publisher.Event) bool {
-	serializedEvent, err := c.codec.Encode(c.index, &event.Content)
-	if err != nil {
-		if !event.Guaranteed() {
-			return false
-		}
-
-		c.log.Errorf("Unable to encode event: %+v", err)
-		c.log.Debugf("Failed event: %v", event)
-		return false
-	}
-
-	os.Stderr.WriteString("\n-----------------------------------------------\n")
-	if _, err = os.Stderr.Write(serializedEvent); err != nil {
-		c.observer.WriteError(err)
-		c.log.Errorf("Error when appending newline to event: %+v", err)
-		return false
-	}
-
-	c.observer.WriteBytes(len(serializedEvent) + 1)
-	return true
+func (c *cls) publishEvents(events []publisher.Event, packageID string) (decision string, err error) {
+	_ = events
+	_ = packageID
+	// TODO:
+	return "ack", nil
 }
 
 func (c *cls) String() string {
 	return "cls"
+}
+
+func (c *cls) generatePackageID() string {
+	batchID := atomic.AddUint64(&c.autoIncrBatchID, 1)
+	if batchID >= math.MaxUint64-1 {
+		batchID = 0
+	}
+	return strings.ToUpper(fmt.Sprintf("%s-%x", c.producerID, batchID))
+}
+
+func generateProducerHash(str string) string {
+	table := crc64.MakeTable(crc64.ECMA)
+	hash := crc64.Checksum([]byte(str), table)
+	hashString := fmt.Sprintf("%016x", hash)
+	return strings.ToUpper(hashString)
 }

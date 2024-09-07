@@ -11,23 +11,26 @@ import (
 
 type clsConfig struct {
 	// NodeIPEnv 读取node ip的环境变量, 如果读取失败，则降级取 event中的 agent.id
-	NodeIPEnv   string           `config:"node_ip_env"`
-	Endpoint    string           `config:"endpoint"`
-	Topic       string           `config:"topic"`
-	AccessKey   string           `config:"access_key"`
-	SecretKey   string           `config:"secret_key"`
-	BulkMaxSize int              `config:"bulk_max_size"`
-	MaxRetries  int              `config:"max_retries"         validate:"min=-1,nonzero"`
-	Codec       codec.Config     `config:"codec"`
-	Queue       config.Namespace `config:"queue"`
+	NodeIPEnv          string           `config:"node_ip_env"`
+	Endpoint           string           `config:"endpoint"`
+	Topic              string           `config:"topic"`
+	AccessKey          string           `config:"access_key"`
+	SecretKey          string           `config:"secret_key"`
+	BulkMaxSize        int              `config:"bulk_max_size"`
+	MaxRetries         int              `config:"max_retries"         validate:"min=-1,nonzero"`
+	BatchTimeoutMillis int64            `config:"batch_timeout_millis"`
+	Codec              codec.Config     `config:"codec"`
+	Queue              config.Namespace `config:"queue"`
 }
 
 func defaultConfig() clsConfig {
 	return clsConfig{
-		Topic:       "",
-		AccessKey:   "",
-		SecretKey:   "",
-		BulkMaxSize: 4096,
+		Topic:              "",
+		AccessKey:          "",
+		SecretKey:          "",
+		BulkMaxSize:        4096,
+		MaxRetries:         3,
+		BatchTimeoutMillis: 15000,
 	}
 }
 
@@ -67,6 +70,9 @@ func (c *clsConfig) Validate() error {
 	}
 	if c.BulkMaxSize <= 0 {
 		return errors.New("cls.bulk_max_size must be greater than zero")
+	}
+	if c.BatchTimeoutMillis <= 0 {
+		return errors.New("cls.batch_timeout_millis must be greater than zero")
 	}
 	return nil
 }
