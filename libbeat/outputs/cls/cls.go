@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"hash/crc64"
 	"math"
-	"net"
-	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -68,9 +66,10 @@ type cls struct {
 	codec    codec.Codec
 	config   *clsConfig
 
+	nodeIP          string
 	producerID      string
 	autoIncrBatchID uint64
-	httpcli         *http.Client
+	client          *CLSHTTPClient
 }
 
 func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, config *clsConfig) (*cls, error) {
@@ -81,40 +80,30 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 	}
 	producerID := generateProducerHash(fmt.Sprintf("%s-%d", nodeIP, time.Now().UnixNano()))
 
+	// new cls http client;
+	client, err := NewCLSHTTPClient(config.Endpoint, config.AccessKey, config.SecretKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to new cls http client, %w", err)
+	}
+
 	return &cls{
 		log:             logp.NewLogger(logSelector),
 		observer:        observer,
 		index:           strings.ToLower(index),
 		codec:           encoder,
 		config:          config,
+		nodeIP:          nodeIP,
 		producerID:      producerID,
 		autoIncrBatchID: 0,
-		httpcli: &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-				DialContext: func(ctx context.Context, network string, addr string) (net.Conn, error) {
-					dialer := &net.Dialer{
-						Timeout:   5 * time.Second,
-						KeepAlive: 30 * time.Second,
-					}
-					return dialer.DialContext(ctx, network, addr)
-				},
-				ForceAttemptHTTP2:     true,
-				MaxIdleConns:          100,
-				IdleConnTimeout:       90 * time.Second,
-				TLSHandshakeTimeout:   5 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
-			},
-		},
+		client:          client,
 	}, nil
 }
 
 func (c *cls) Close() error {
-	// TODO: 按需 close;
 	return nil
 }
 
-func (c *cls) Publish(_ context.Context, batch publisher.Batch) error {
+func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	events := batch.Events()
 	c.observer.NewBatch(len(events))
 
@@ -146,14 +135,34 @@ func (c *cls) Publish(_ context.Context, batch publisher.Batch) error {
 }
 
 func (c *cls) publishEvents(events []publisher.Event, packageID string) (decision string, err error) {
-	_ = events
-	_ = packageID
-	// TODO:
+	_ = c.logGroupListFrom(events)
+
+	//ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	//defer cancel()
+
+	//c.client.Send(ctx, c.config.Topic)
+
 	return "ack", nil
 }
 
 func (c *cls) String() string {
 	return "cls"
+}
+
+// event 是 flattern 过的格式:
+// {"agent.ephemeral_id":"d49c7cb0-f9ae-4696-b44d-4bb68e7ce296","agent.id":"1a300adf-207e-4ef5-ab29-4dc4d875f655","agent.name":"zwf","agent.type":"filebeat","agent.version":"8.14.4","ecs.version":"8.0.0","host.name":"zwf","input.type":"log","log.file.path":"/home/zwf/workspace/experiment/beats/filebeat/y.log","log.offset":88,"message":"hello","metadata.version":"8.14.4","timestamp":"2024-09-07T17:00:11.281090418+08:00"}
+func (c *cls) logGroupListFrom(events []publisher.Event) LogGroupList {
+	//fileGrp := make(map[string]LogGroup)
+	for _, e := range events {
+		fields := e.Content.Fields.StringToPrint()
+		fmt.Printf("fields=%s\n", fields)
+		meta := e.Content.Meta.StringToPrint()
+		fmt.Printf("meta=%s\n", meta)
+		ts := e.Content.Timestamp
+		fmt.Printf("ts=%s\n", ts.String())
+		return LogGroupList{}
+	}
+	return LogGroupList{}
 }
 
 func (c *cls) generatePackageID() string {
