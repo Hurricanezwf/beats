@@ -17,6 +17,8 @@ import (
 	"github.com/elastic/beats/v7/libbeat/publisher"
 	"github.com/elastic/elastic-agent-libs/config"
 	"github.com/elastic/elastic-agent-libs/logp"
+
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -105,17 +107,29 @@ func (c *cls) Close() error {
 
 func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	events := batch.Events()
+
+	// 将所有事件编码成 flatten 模式;
+	var flatternJSONEvents []gjson.Result
+	for _, e := range events {
+		b, err := c.codec.Encode(c.index, &e.Content)
+		if err != nil {
+			c.log.Warnf("failed to encode event content, %v", err)
+			continue
+		}
+		flatternJSONEvents = append(flatternJSONEvents, gjson.ParseBytes(b))
+	}
+
 	c.observer.NewBatch(len(events))
 
 	packageID := c.generatePackageID()
 
 	var decision string
+	var fastRecover bool
 	var err error
 	for i := 0; i < c.config.MaxRetries+1; i++ {
-		if decision, err = c.publishEvents(events, packageID); err == nil {
-			batch.ACK()
-			c.observer.Acked(len(events))
-			return nil
+		decision, fastRecover, err = c.publishEvents(flatternJSONEvents, packageID)
+		if err == nil || !fastRecover {
+			break
 		}
 		time.Sleep(time.Second)
 	}
@@ -124,25 +138,41 @@ func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	case "ack":
 		batch.ACK()
 		c.observer.Acked(len(events))
+		return err
 	case "drop":
 		batch.Drop()
 		c.observer.Dropped(len(events))
+		return err
 	case "retry":
 		batch.Retry()
 		c.observer.Failed(len(events))
+		return err
 	}
 	return fmt.Errorf("unknown decision %s returned", decision)
 }
 
-func (c *cls) publishEvents(events []publisher.Event, packageID string) (decision string, err error) {
-	_ = c.logGroupListFrom(events)
+func (c *cls) publishEvents(flatternJSONEvents []gjson.Result, packageID string) (decision string, fastRecover bool, err error) {
+	logGroupList := c.logGroupListFrom(flatternJSONEvents, packageID)
 
-	//ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	//defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	//c.client.Send(ctx, c.config.Topic)
-
-	return "ack", nil
+	clserr := c.client.Send(ctx, c.config.Topic, logGroupList)
+	nxx := clserr.HTTPCode / 100
+	switch nxx {
+	case 2:
+		return "ack", false, nil
+	case 3:
+		// redirect;
+		return "retry", false, fmt.Errorf("cls server return status code %d, errorCode: %s, msg: %s, requestID: %s", clserr.HTTPCode, clserr.Code, clserr.Message, clserr.RequestID)
+	case 4:
+		// client error;
+		return "retry", false, fmt.Errorf("cls server return status code %d, errorCode: %s, msg: %s, requestID: %s", clserr.HTTPCode, clserr.Code, clserr.Message, clserr.RequestID)
+	case 5:
+		// server error;
+		return "retry", true, fmt.Errorf("cls server return status code %d, errorCode: %s, msg: %s, requestID: %s", clserr.HTTPCode, clserr.Code, clserr.Message, clserr.RequestID)
+	}
+	return "drop", false, fmt.Errorf("invalid http status code %d returned from cls, errorCode: %s, msg: %s, requestID: %s", clserr.HTTPCode, clserr.Code, clserr.Message, clserr.RequestID)
 }
 
 func (c *cls) String() string {
@@ -150,19 +180,51 @@ func (c *cls) String() string {
 }
 
 // event 是 flattern 过的格式:
-// {"agent.ephemeral_id":"d49c7cb0-f9ae-4696-b44d-4bb68e7ce296","agent.id":"1a300adf-207e-4ef5-ab29-4dc4d875f655","agent.name":"zwf","agent.type":"filebeat","agent.version":"8.14.4","ecs.version":"8.0.0","host.name":"zwf","input.type":"log","log.file.path":"/home/zwf/workspace/experiment/beats/filebeat/y.log","log.offset":88,"message":"hello","metadata.version":"8.14.4","timestamp":"2024-09-07T17:00:11.281090418+08:00"}
-func (c *cls) logGroupListFrom(events []publisher.Event) LogGroupList {
-	//fileGrp := make(map[string]LogGroup)
-	for _, e := range events {
-		fields := e.Content.Fields.StringToPrint()
-		fmt.Printf("fields=%s\n", fields)
-		meta := e.Content.Meta.StringToPrint()
-		fmt.Printf("meta=%s\n", meta)
-		ts := e.Content.Timestamp
-		fmt.Printf("ts=%s\n", ts.String())
-		return LogGroupList{}
+// {"agent.ephemeral_id":"d49c7cb0-f9ae-4696-b44d-4bb68e7ce296","agent.id":"1a300adf-207e-4ef5-ab29-4dc4d875f655","agent.name":"zwf","agent.type":"filebeat","agent.version":"8.14.4","ecs.version":"8.0.0","host.name":"zwf","input.type":"log","log.file.path":"/home/zwf/workspace/experiment/beats/filebeat/y.log","log.offset":88,"message":"hello","metadata.version":"8.14.4","timestamp":1762282382349234324}
+func (c *cls) logGroupListFrom(flatternJSONEvents []gjson.Result, packageID string) LogGroupList {
+	nowTS := time.Now().UnixNano()
+	fileGrp := make(map[string]*LogGroup)
+	for _, e := range flatternJSONEvents {
+		filepath := e.Get("log.file.path").String()
+		if filepath == "" {
+			c.log.Error("could not find log.file.path from input flatten JSON event")
+			continue
+		}
+		m := e.Map()
+		contents := make([]*Log_Content, 0, len(m))
+		for k, v := range m {
+			contents = append(contents, &Log_Content{
+				Key:   stringPtr(k),
+				Value: stringPtr(v.String()),
+			})
+		}
+
+		grp := fileGrp[filepath]
+		grp.Logs = append(grp.Logs, &Log{
+			Time:        int64Ptr(e.Get("timestamp").Int()),
+			Contents:    contents,
+			CollectTime: int64Ptr(nowTS),
+		})
+		if grp.ContextFlow == nil {
+			grp.ContextFlow = stringPtr(packageID)
+		}
+		if grp.Filename == nil {
+			grp.Filename = stringPtr(filepath)
+		}
+		if grp.Source == nil {
+			grp.Source = stringPtr(c.nodeIP)
+		}
+		if grp.Hostname == nil {
+			grp.Hostname = stringPtr(c.nodeIP)
+		}
+		fileGrp[filepath] = grp
 	}
-	return LogGroupList{}
+
+	var logGroupList LogGroupList
+	for _, grp := range fileGrp {
+		logGroupList.LogGroupList = append(logGroupList.LogGroupList, grp)
+	}
+	return logGroupList
 }
 
 func (c *cls) generatePackageID() string {
@@ -178,4 +240,14 @@ func generateProducerHash(str string) string {
 	hash := crc64.Checksum([]byte(str), table)
 	hashString := fmt.Sprintf("%016x", hash)
 	return strings.ToUpper(hashString)
+}
+
+func stringPtr(str string) *string {
+	strcopy := str
+	return &strcopy
+}
+
+func int64Ptr(v int64) *int64 {
+	vcopy := v
+	return &vcopy
 }
