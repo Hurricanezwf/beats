@@ -10,6 +10,8 @@ import (
 )
 
 type clsConfig struct {
+	// NodeIPEnv 读取node ip的环境变量, 如果读取失败，则降级取 event中的 agent.id
+	NodeIPEnv   string           `config:"node_ip_env"`
 	Endpoint    string           `config:"endpoint"`
 	Topic       string           `config:"topic"`
 	AccessKey   string           `config:"access_key"`
@@ -40,6 +42,9 @@ func readConfig(cfg *config.C) (*clsConfig, error) {
 func (c *clsConfig) Validate() error {
 	if c == nil {
 		return errors.New("nil config")
+	}
+	if c.NodeIPEnv == "" {
+		return errors.New("cls.node_ip_env is required")
 	}
 	if c.Endpoint == "" {
 		return errors.New("cls.endpoint is required")
