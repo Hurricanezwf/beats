@@ -158,6 +158,10 @@ func (c *cls) publishEvents(flatternJSONEvents []gjson.Result, packageID string)
 	defer cancel()
 
 	clserr := c.client.Send(ctx, c.config.Topic, logGroupList)
+	if clserr == nil {
+		return "ack", false, nil
+	}
+
 	nxx := clserr.HTTPCode / 100
 	switch nxx {
 	case 2:
@@ -185,9 +189,9 @@ func (c *cls) logGroupListFrom(flatternJSONEvents []gjson.Result, packageID stri
 	nowTS := time.Now().UnixNano()
 	fileGrp := make(map[string]*LogGroup)
 	for _, e := range flatternJSONEvents {
-		filepath := e.Get("log.file.path").String()
+		filepath := e.Get("log\\.file\\.path").String()
 		if filepath == "" {
-			c.log.Error("could not find log.file.path from input flatten JSON event")
+			c.log.Errorf("could not find log.file.path from input flatten JSON event, json str: %s", e.String())
 			continue
 		}
 		m := e.Map()
@@ -200,6 +204,9 @@ func (c *cls) logGroupListFrom(flatternJSONEvents []gjson.Result, packageID stri
 		}
 
 		grp := fileGrp[filepath]
+		if grp == nil {
+			grp = &LogGroup{}
+		}
 		grp.Logs = append(grp.Logs, &Log{
 			Time:        int64Ptr(e.Get("timestamp").Int()),
 			Contents:    contents,
