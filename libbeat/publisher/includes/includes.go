@@ -22,6 +22,7 @@ import (
 	_ "github.com/elastic/beats/v7/libbeat/outputs/cls"
 	_ "github.com/elastic/beats/v7/libbeat/outputs/codec/format"
 	_ "github.com/elastic/beats/v7/libbeat/outputs/codec/json"
+	_ "github.com/elastic/beats/v7/libbeat/outputs/codec/kv"
 	_ "github.com/elastic/beats/v7/libbeat/outputs/console"
 	_ "github.com/elastic/beats/v7/libbeat/outputs/discard"
 	_ "github.com/elastic/beats/v7/libbeat/outputs/elasticsearch"

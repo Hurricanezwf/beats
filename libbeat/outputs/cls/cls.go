@@ -65,8 +65,6 @@ type cls struct {
 	config   *clsConfig
 
 	httpcli *http.Client
-	//writer *bufio.Writer
-	//out    *os.File
 }
 
 func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, config *clsConfig) (*cls, error) {
