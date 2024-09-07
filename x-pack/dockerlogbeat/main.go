@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/go-plugins-helpers/sdk"
 
+	_ "github.com/elastic/beats/v7/libbeat/outputs/cls"
 	_ "github.com/elastic/beats/v7/libbeat/outputs/console"
 	_ "github.com/elastic/beats/v7/libbeat/outputs/elasticsearch"
 	_ "github.com/elastic/beats/v7/libbeat/outputs/fileout"
