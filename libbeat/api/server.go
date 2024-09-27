@@ -25,6 +25,7 @@ import (
 	"strconv"
 
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/elastic/elastic-agent-libs/config"
 	"github.com/elastic/elastic-agent-libs/logp"
@@ -56,8 +57,13 @@ func New(log *logp.Logger, config *config.C) (*Server, error) {
 		return nil, err
 	}
 
+	// Note: BY ZWF;
+	// ADD METRICS ENDPOINT;
+	router := mux.NewRouter().StrictSlash(true)
+	router.Handle("/metrics", promhttp.Handler())
+
 	return &Server{
-		mux:    mux.NewRouter().StrictSlash(true),
+		mux:    router,
 		l:      l,
 		config: cfg,
 		log:    log.Named("api"),
