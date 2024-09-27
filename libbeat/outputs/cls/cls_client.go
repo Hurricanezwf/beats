@@ -120,7 +120,11 @@ func (client *CLSHTTPClient) Send(ctx context.Context, topicId string, logGroupL
 	req = req.WithContext(ctx)
 	resp, err := client.client.Do(req)
 	if err != nil {
-		return NewError(-1, "--No RequestId--", BAD_REQUEST, err)
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Temporary() {
+				return NewError(-1, "--NetError--", TEMPORARY_ERROR, err)
+		}
+		return NewError(-1, "--UnknownError--", UNKNOWN_ERROR, err)
 	}
 	defer resp.Body.Close()
 

@@ -3,6 +3,7 @@ package cls
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/crc64"
 	"math"
@@ -126,7 +127,11 @@ func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	var decision string
 	var fastRecover bool
 	var err error
+	var start = time.Now()
 	for i := 0; i < c.config.MaxRetries+1; i++ {
+		if i > 0 {
+			writeCLSRetryTotal.Inc()
+		}
 		decision, fastRecover, err = c.publishEvents(flatternJSONEvents, packageID)
 		if err == nil || !fastRecover {
 			break
@@ -138,6 +143,8 @@ func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	case "ack":
 		batch.ACK()
 		c.observer.Acked(len(events))
+		c.observer.ReportLatency(time.Since(start))
+		writeCLSLatencyMillis.Observe(float64(time.Since(start).Milliseconds()))
 		return err
 	case "drop":
 		batch.Drop()
@@ -146,6 +153,7 @@ func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	case "retry":
 		batch.Retry()
 		c.observer.Failed(len(events))
+		writeCLSRetryTotal.Inc()
 		return err
 	}
 	return fmt.Errorf("unknown decision %s returned", decision)
@@ -160,6 +168,14 @@ func (c *cls) publishEvents(flatternJSONEvents []gjson.Result, packageID string)
 	clserr := c.client.Send(ctx, c.config.Topic, logGroupList)
 	if clserr == nil {
 		return "ack", false, nil
+	}
+	writeCLSErrorTotal.Inc()
+
+	if clserr.HTTPCode < 0 {
+		if clserr.Code == TEMPORARY_ERROR {
+			return "retry", true, errors.New(clserr.Message)
+		}
+		return "drop", false, fmt.Errorf("error code: %s, message: %s", clserr.Code, clserr.Message)
 	}
 
 	nxx := clserr.HTTPCode / 100
