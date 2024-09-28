@@ -72,20 +72,21 @@ func NewCLSHTTPClient(endpoint, accessKey, secretKey string) (*CLSHTTPClient, er
 }
 
 func (client *CLSHTTPClient) lz4Compress(body []byte, params url.Values, urlReport string) (*http.Request, *CLSError) {
-	out := make([]byte, lz4.CompressBlockBound(len(body)))
-	var hashTable [1 << 16]int
-	n, err := lz4.CompressBlock(body, out, hashTable[:])
+	buff := bytes.NewBuffer(make([]byte, 0, len(body)/2))
+	lz4Writer := lz4.NewWriter(buff)
+	lz4Writer.Header.CompressionLevel = 0 // fastest
+	defer lz4Writer.Close()
+
+	n, err := lz4Writer.Write(body)
 	if err != nil {
-		return nil, NewError(-1, "", BAD_REQUEST, err)
+		return nil, NewError(-1, "", INTERNAL_SERVER_ERROR, fmt.Errorf("failed to compress body with lz4, %v", err))
 	}
-	// copy incompressible data as lz4 format
-	if n == 0 {
-		n, _ = copyIncompressible(body, out)
-	}
+
 	if atomic.CompareAndSwapInt64(&client.maxPayloadSize, client.maxPayloadSize, int64(n)) {
 		writeCLSMaxPayloadBytes.Set(float64(n))
 	}
-	req, err := http.NewRequest(http.MethodPost, urlReport, bytes.NewBuffer(out[:n]))
+
+	req, err := http.NewRequest(http.MethodPost, urlReport, buff)
 	if err != nil {
 		return nil, NewError(-1, "", BAD_REQUEST, err)
 	}
