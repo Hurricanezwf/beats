@@ -27,4 +27,11 @@ var (
 		Help:      "The lantency milliseconds when writing output with http to tencent CLS",
 		Buckets:   []float64{10, 20, 30, 40, 50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 3000},
 	})
+
+	clsWorkerQueueLagNum = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "filebeat",
+		Subsystem: "libbeat",
+		Name:      "cls_worker_queue_lag_num",
+		Help:      "The lagged batch numer of the cls workers",
+	})
 )

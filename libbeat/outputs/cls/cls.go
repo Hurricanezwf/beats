@@ -113,6 +113,7 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 	}
 
 	c.startWorkers()
+	go c.statMetrics()
 
 	return c, nil
 }
@@ -126,6 +127,15 @@ func (c *cls) startWorkers() {
 				_ = c.publish(batch)
 			}
 		}()
+	}
+}
+
+func (c *cls) statMetrics() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		clsWorkerQueueLagNum.Set(float64(len(c.queue)))
 	}
 }
 
