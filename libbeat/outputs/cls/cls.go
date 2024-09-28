@@ -204,7 +204,7 @@ func (c *cls) publish(batch publisher.Batch) error {
 		if i > 0 {
 			writeCLSRetryTotal.Inc()
 		}
-		decision, fastRecover, err = c.publishEvents(flatternJSONEvents, packageID)
+		decision, fastRecover, err = c.publishEvents(flatternJSONEvents, packageID, c.config.BatchTimeoutMillis)
 		if err == nil || !fastRecover {
 			break
 		}
@@ -231,10 +231,10 @@ func (c *cls) publish(batch publisher.Batch) error {
 	return fmt.Errorf("unknown decision %s returned", decision)
 }
 
-func (c *cls) publishEvents(flatternJSONEvents []gjson.Result, packageID string) (decision string, fastRecover bool, err error) {
+func (c *cls) publishEvents(flatternJSONEvents []gjson.Result, packageID string, timeoutMillis int64) (decision string, fastRecover bool, err error) {
 	logGroupList := c.logGroupListFrom(flatternJSONEvents, packageID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMillis)*time.Millisecond)
 	defer cancel()
 
 	clserr := c.client.Send(ctx, c.config.Topic, logGroupList)

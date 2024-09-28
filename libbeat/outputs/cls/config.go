@@ -34,7 +34,7 @@ func defaultConfig() clsConfig {
 		MaxRetries:         3,
 		WriteConcurrency:   5,
 		WriteQueueSize:     50,
-		BatchTimeoutMillis: 15000,
+		BatchTimeoutMillis: 5000,
 	}
 }
 
