@@ -18,6 +18,8 @@ type clsConfig struct {
 	SecretKey          string           `config:"secret_key"`
 	BulkMaxSize        int              `config:"bulk_max_size"`
 	MaxRetries         int              `config:"max_retries"         validate:"min=-1,nonzero"`
+	WriteConcurrency   int              `config:"write_concurrency" validate:"min=1,nonzero"`
+	WriteQueueSize     int              `config:"write_queue_size" validate:"min=1,nonzero"`
 	BatchTimeoutMillis int64            `config:"batch_timeout_millis"`
 	Codec              codec.Config     `config:"codec"`
 	Queue              config.Namespace `config:"queue"`
@@ -30,6 +32,8 @@ func defaultConfig() clsConfig {
 		SecretKey:          "",
 		BulkMaxSize:        4096,
 		MaxRetries:         3,
+		WriteConcurrency:   5,
+		WriteQueueSize:     50,
 		BatchTimeoutMillis: 15000,
 	}
 }
@@ -70,6 +74,12 @@ func (c *clsConfig) Validate() error {
 	}
 	if c.BulkMaxSize <= 0 {
 		return errors.New("cls.bulk_max_size must be greater than zero")
+	}
+	if c.WriteConcurrency <= 0 {
+		return errors.New("cls.write_concurrency must be greater than zero")
+	}
+	if c.WriteQueueSize <= 0 {
+		return errors.New("cls.write_queue_size must be greater than zero")
 	}
 	if c.BatchTimeoutMillis <= 0 {
 		return errors.New("cls.batch_timeout_millis must be greater than zero")

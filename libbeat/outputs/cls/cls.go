@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,11 +64,15 @@ func makeCLS(
 }
 
 type cls struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
 	log      *logp.Logger
 	observer outputs.Observer
 	index    string
 	codec    codec.Codec
 	config   *clsConfig
+	queue    chan publisher.Batch
+	wg       *sync.WaitGroup
 
 	nodeIP          string
 	producerID      string
@@ -89,12 +94,18 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 		return nil, fmt.Errorf("failed to new cls http client, %w", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &cls{
+		ctx:             ctx,
+		cancel:          cancel,
 		log:             logp.NewLogger(logSelector),
 		observer:        observer,
 		index:           strings.ToLower(index),
 		codec:           encoder,
 		config:          config,
+		queue:           make(chan publisher.Batch, config.WriteQueueSize),
+		wg:              &sync.WaitGroup{},
 		nodeIP:          nodeIP,
 		producerID:      producerID,
 		autoIncrBatchID: 0,
@@ -102,11 +113,54 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 	}, nil
 }
 
+func (c *cls) startWorkers() {
+	c.wg.Add(c.config.WriteConcurrency)
+	for i := 0; i < c.config.WriteConcurrency; i++ {
+		go func() {
+			defer c.wg.Done()
+			for batch := range c.queue {
+				_ = c.publish(batch)
+			}
+		}()
+	}
+}
+
 func (c *cls) Close() error {
+	c.log.Info("output.cls is closing")
+	// 1.阻断publish;
+	if c.cancel != nil {
+		c.cancel()
+	}
+	time.Sleep(time.Second)
+	// 2. 关闭队列;
+	if c.queue != nil {
+		close(c.queue)
+	}
+	// 3. 等待所有worker安全退出;
+	c.wg.Wait()
+	// 4. 关闭成功;
+	c.log.Info("output.cls closed")
 	return nil
 }
 
 func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
+	select {
+	case <-c.ctx.Done():
+		return errors.New("output.cls was closed")
+	default:
+	}
+
+	select {
+	case c.queue <- batch:
+		return nil
+	case <-ctx.Done():
+		return errors.New("queue is full")
+	case <-c.ctx.Done():
+		return errors.New("output.cls was closed")
+	}
+}
+
+func (c *cls) publish(batch publisher.Batch) error {
 	events := batch.Events()
 
 	// 将所有事件编码成 flatten 模式;
