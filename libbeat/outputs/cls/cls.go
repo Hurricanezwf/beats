@@ -150,6 +150,7 @@ func (c *cls) Close() error {
 func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	select {
 	case <-c.ctx.Done():
+		batch.Cancelled()
 		return errors.New("output.cls was closed")
 	default:
 	}
@@ -158,8 +159,11 @@ func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	case c.queue <- batch:
 		return nil
 	case <-ctx.Done():
+		// 如果队列满了, 卡到超时, 设置状态为取消, 不计次重试;
+		batch.Cancelled()
 		return errors.New("queue is full")
 	case <-c.ctx.Done():
+		batch.Cancelled()
 		return errors.New("output.cls was closed")
 	}
 }
