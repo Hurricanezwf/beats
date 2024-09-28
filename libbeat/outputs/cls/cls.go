@@ -77,7 +77,7 @@ type cls struct {
 	nodeIP          string
 	producerID      string
 	autoIncrBatchID uint64
-	client          *CLSHTTPClient
+	clients         []*CLSHTTPClient
 }
 
 func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, config *clsConfig) (*cls, error) {
@@ -88,10 +88,14 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 	}
 	producerID := generateProducerHash(fmt.Sprintf("%s-%d", nodeIP, time.Now().UnixNano()))
 
-	// new cls http client;
-	client, err := NewCLSHTTPClient(config.Endpoint, config.AccessKey, config.SecretKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to new cls http client, %w", err)
+	clients := make([]*CLSHTTPClient, config.WriteConcurrency)
+	for i := 0; i < config.WriteConcurrency; i++ {
+		// new cls http client;
+		client, err := NewCLSHTTPClient(config.Endpoint, config.AccessKey, config.SecretKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to new cls http client, %w", err)
+		}
+		clients[i] = client
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -109,7 +113,7 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 		nodeIP:          nodeIP,
 		producerID:      producerID,
 		autoIncrBatchID: 0,
-		client:          client,
+		clients:         clients,
 	}
 
 	c.startWorkers()
@@ -121,12 +125,13 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 func (c *cls) startWorkers() {
 	c.wg.Add(c.config.WriteConcurrency)
 	for i := 0; i < c.config.WriteConcurrency; i++ {
-		go func() {
+		go func(idx int) {
 			defer c.wg.Done()
+			client := c.clients[idx]
 			for batch := range c.queue {
-				_ = c.publish(batch)
+				_ = c.publish(client, batch)
 			}
-		}()
+		}(i)
 	}
 }
 
@@ -178,7 +183,7 @@ func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 	}
 }
 
-func (c *cls) publish(batch publisher.Batch) error {
+func (c *cls) publish(client *CLSHTTPClient, batch publisher.Batch) error {
 	events := batch.Events()
 
 	// 将所有事件编码成 flatten 模式;
@@ -204,7 +209,7 @@ func (c *cls) publish(batch publisher.Batch) error {
 		if i > 0 {
 			writeCLSRetryTotal.Inc()
 		}
-		decision, fastRecover, err = c.publishEvents(flatternJSONEvents, packageID, c.config.BatchTimeoutMillis)
+		decision, fastRecover, err = c.publishEvents(client, flatternJSONEvents, packageID, c.config.BatchTimeoutMillis)
 		if err == nil || !fastRecover {
 			break
 		}
@@ -234,13 +239,13 @@ func (c *cls) publish(batch publisher.Batch) error {
 	return fmt.Errorf("unknown decision %s returned", decision)
 }
 
-func (c *cls) publishEvents(flatternJSONEvents []gjson.Result, packageID string, timeoutMillis int64) (decision string, fastRecover bool, err error) {
+func (c *cls) publishEvents(client *CLSHTTPClient, flatternJSONEvents []gjson.Result, packageID string, timeoutMillis int64) (decision string, fastRecover bool, err error) {
 	logGroupList := c.logGroupListFrom(flatternJSONEvents, packageID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMillis)*time.Millisecond)
 	defer cancel()
 
-	clserr := c.client.Send(ctx, c.config.Topic, logGroupList)
+	clserr := client.Send(ctx, c.config.Topic, logGroupList)
 	if clserr == nil {
 		return "ack", false, nil
 	}
