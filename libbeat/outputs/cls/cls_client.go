@@ -135,21 +135,23 @@ func (client *CLSHTTPClient) Send(ctx context.Context, topicId string, logGroupL
 	}
 	defer resp.Body.Close()
 
+	// 200 直接返回
+	if resp.StatusCode == 200 {
+		return nil
+	}
+
+	v, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return NewError(int32(resp.StatusCode), resp.Header.Get("X-Cls-Requestid"), BAD_REQUEST, errors.New("bad request"))
+	}
+
 	// 401, 403, 404, 413 直接返回错误
 	if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 404 || resp.StatusCode == 413 {
-		v, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return NewError(int32(resp.StatusCode), resp.Header.Get("X-Cls-Requestid"), BAD_REQUEST, errors.New("bad request"))
-		}
 		var message ErrorMessage
 		if err := json.Unmarshal(v, &message); err != nil {
 			return NewError(int32(resp.StatusCode), resp.Header.Get("X-Cls-Requestid"), BAD_REQUEST, errors.New("bad request"))
 		}
 		return NewError(int32(resp.StatusCode), resp.Header.Get("X-Cls-Requestid"), message.Code, errors.New(message.Message))
-	}
-	// 200 直接返回
-	if resp.StatusCode == 200 {
-		return nil
 	}
 
 	// 如果被服务端写入限速
@@ -160,7 +162,7 @@ func (client *CLSHTTPClient) Send(ctx context.Context, topicId string, logGroupL
 	if resp.StatusCode >= 500 {
 		return NewError(int32(resp.StatusCode), resp.Header.Get("X-Cls-Requestid"), INTERNAL_SERVER_ERROR, errors.New("server internal error"))
 	}
-	return NewError(int32(resp.StatusCode), resp.Header.Get("X-Cls-Requestid"), UNKNOWN_ERROR, errors.New("unknown error"))
+	return NewError(int32(resp.StatusCode), resp.Header.Get("X-Cls-Requestid"), UNKNOWN_ERROR, errors.New(string(v)))
 }
 
 func copyIncompressible(src, dst []byte) (int, error) {

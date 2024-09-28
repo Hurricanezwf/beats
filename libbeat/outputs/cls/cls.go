@@ -211,7 +211,7 @@ func (c *cls) publish(batch publisher.Batch) error {
 		time.Sleep(time.Second)
 	}
 	if err != nil && decision != "ack" {
-		c.log.Warn("publish event to tencent cls error, %v", err)
+		c.log.Warn(fmt.Sprintf("publish event to tencent cls error, %v", err))
 	}
 
 	switch decision {
