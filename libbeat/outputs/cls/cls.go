@@ -96,7 +96,7 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &cls{
+	c := &cls{
 		ctx:             ctx,
 		cancel:          cancel,
 		log:             logp.NewLogger(logSelector),
@@ -110,7 +110,11 @@ func newCLSClient(observer outputs.Observer, index string, encoder codec.Codec, 
 		producerID:      producerID,
 		autoIncrBatchID: 0,
 		client:          client,
-	}, nil
+	}
+
+	c.startWorkers()
+
+	return c, nil
 }
 
 func (c *cls) startWorkers() {
