@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pierrec/lz4"
@@ -25,6 +26,8 @@ type CLSHTTPClient struct {
 	accessKey string
 	secretKey string
 	client    *http.Client
+
+	maxPayloadSize int64
 }
 
 func NewCLSHTTPClient(endpoint, accessKey, secretKey string) (*CLSHTTPClient, error) {
@@ -64,6 +67,7 @@ func NewCLSHTTPClient(endpoint, accessKey, secretKey string) (*CLSHTTPClient, er
 			},
 			Timeout: 10 * time.Second, // 默认请求10秒超时
 		},
+		maxPayloadSize: 0,
 	}, nil
 }
 
@@ -77,6 +81,9 @@ func (client *CLSHTTPClient) lz4Compress(body []byte, params url.Values, urlRepo
 	// copy incompressible data as lz4 format
 	if n == 0 {
 		n, _ = copyIncompressible(body, out)
+	}
+	if atomic.CompareAndSwapInt64(&client.maxPayloadSize, client.maxPayloadSize, int64(n)) {
+		writeCLSMaxPayloadBytes.Set(float64(n))
 	}
 	req, err := http.NewRequest(http.MethodPost, urlReport, bytes.NewBuffer(out[:n]))
 	if err != nil {
@@ -122,7 +129,7 @@ func (client *CLSHTTPClient) Send(ctx context.Context, topicId string, logGroupL
 	if err != nil {
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Temporary() {
-				return NewError(-1, "--NetError--", TEMPORARY_ERROR, err)
+			return NewError(-1, "--NetError--", TEMPORARY_ERROR, err)
 		}
 		return NewError(-1, "--UnknownError--", UNKNOWN_ERROR, err)
 	}

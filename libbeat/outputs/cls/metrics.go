@@ -28,6 +28,13 @@ var (
 		Buckets:   []float64{10, 20, 30, 40, 50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 2000, 3000},
 	})
 
+	writeCLSMaxPayloadBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "filebeat",
+		Subsystem: "libbeat",
+		Name:      "output_http_write_cls_max_payload_bytes",
+		Help:      "The max payload size of writing to cls",
+	})
+
 	clsWorkerQueueLagNum = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "filebeat",
 		Subsystem: "libbeat",
