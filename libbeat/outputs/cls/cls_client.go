@@ -71,22 +71,24 @@ func NewCLSHTTPClient(endpoint, accessKey, secretKey string) (*CLSHTTPClient, er
 	}, nil
 }
 
-func (client *CLSHTTPClient) lz4Compress(body []byte, params url.Values, urlReport string) (*http.Request, *CLSError) {
+func (client *CLSHTTPClient) lz4Compress(ctx context.Context, body []byte, params url.Values, urlReport string) (*http.Request, *CLSError) {
 	buff := bytes.NewBuffer(make([]byte, 0, len(body)/2))
 	lz4Writer := lz4.NewWriter(buff)
 	lz4Writer.Header.CompressionLevel = 0 // fastest
-	defer lz4Writer.Close()
-
 	n, err := lz4Writer.Write(body)
 	if err != nil {
+		_ = lz4Writer.Close()
 		return nil, NewError(-1, "", INTERNAL_SERVER_ERROR, fmt.Errorf("failed to compress body with lz4, %v", err))
+	}
+	if err = lz4Writer.Close(); err != nil {
+		return nil, NewError(-1, "", INTERNAL_SERVER_ERROR, fmt.Errorf("failed to fully compress body with lz4, %v", err))
 	}
 
 	if atomic.CompareAndSwapInt64(&client.maxPayloadSize, client.maxPayloadSize, int64(n)) {
 		writeCLSMaxPayloadBytes.Set(float64(n))
 	}
 
-	req, err := http.NewRequest(http.MethodPost, urlReport, buff)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlReport, buff)
 	if err != nil {
 		return nil, NewError(-1, "", BAD_REQUEST, err)
 	}
@@ -116,7 +118,7 @@ func (client *CLSHTTPClient) Send(ctx context.Context, topicId string, logGroupL
 	var req *http.Request
 	var clsErr *CLSError
 
-	if req, clsErr = client.lz4Compress(body, params, urlReport); clsErr != nil {
+	if req, clsErr = client.lz4Compress(ctx, body, params, urlReport); clsErr != nil {
 		return clsErr
 	}
 
@@ -125,7 +127,6 @@ func (client *CLSHTTPClient) Send(ctx context.Context, topicId string, logGroupL
 	req.Header.Add("Authorization", authorization)
 	req.Header.Add("User-Agent", "cls-go-sdk-1.0.7")
 
-	req = req.WithContext(ctx)
 	resp, err := client.client.Do(req)
 	if err != nil {
 		var netErr net.Error
