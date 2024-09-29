@@ -127,6 +127,7 @@ func (client *CLSHTTPClient) Send(ctx context.Context, topicId string, logGroupL
 	req.Header.Add("Authorization", authorization)
 	req.Header.Add("User-Agent", "cls-go-sdk-1.0.7")
 
+	writeCLSTotal.Inc()
 	resp, err := client.client.Do(req)
 	if err != nil {
 		var netErr net.Error

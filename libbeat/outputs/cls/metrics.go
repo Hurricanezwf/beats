@@ -6,6 +6,13 @@ import (
 )
 
 var (
+	writeCLSTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "filebeat",
+		Subsystem: "libbeat",
+		Name:      "output_http_write_cls_total",
+		Help:      "The total number of http requests when writing output with http to tencent CLS",
+	})
+
 	writeCLSErrorTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "filebeat",
 		Subsystem: "libbeat",
