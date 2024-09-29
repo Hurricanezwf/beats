@@ -185,6 +185,7 @@ func (c *cls) Publish(ctx context.Context, batch publisher.Batch) error {
 
 func (c *cls) publish(client *CLSHTTPClient, batch publisher.Batch) error {
 	events := batch.Events()
+	c.observer.NewBatch(len(events))
 
 	// 将所有事件编码成 flatten 模式;
 	var flatternJSONEvents []gjson.Result
@@ -196,8 +197,6 @@ func (c *cls) publish(client *CLSHTTPClient, batch publisher.Batch) error {
 		}
 		flatternJSONEvents = append(flatternJSONEvents, gjson.ParseBytes(b))
 	}
-
-	c.observer.NewBatch(len(events))
 
 	packageID := c.generatePackageID()
 

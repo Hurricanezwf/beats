@@ -30,8 +30,7 @@ func defaultConfig() clsConfig {
 		Topic:              "",
 		AccessKey:          "",
 		SecretKey:          "",
-		// BulkMaxSize 不超过 10000条;
-		BulkMaxSize:        10000,
+		BulkMaxSize:        2048,
 		MaxRetries:         3,
 		WriteConcurrency:   5,
 		WriteQueueSize:     50,
