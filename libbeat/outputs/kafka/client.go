@@ -176,8 +176,10 @@ func (c *client) Publish(_ context.Context, batch publisher.Batch) error {
 		}
 
 		msg.ref = ref
+		msg.produceAt = time.Now()
 		msg.initProducerMessage()
 		ch <- &msg.msg
+		writeKafkaTotal.Inc()
 	}
 
 	return nil
@@ -258,6 +260,7 @@ func (c *client) successWorker(ch <-chan *sarama.ProducerMessage) {
 	for libMsg := range ch {
 		msg := libMsg.Metadata.(*message)
 		msg.ref.done()
+		writeKafkaLatencyMillis.Observe(float64(time.Since(msg.produceAt).Milliseconds()))
 	}
 }
 
@@ -267,6 +270,8 @@ func (c *client) errorWorker(ch <-chan *sarama.ProducerError) {
 	defer c.log.Debug("Stop kafka error handler")
 
 	for errMsg := range ch {
+		writeKafkaErrorTotal.Inc()
+		c.log.Warn(fmt.Sprintf("kafka produce error, %v", errMsg.Err))
 		msg := errMsg.Msg.Metadata.(*message)
 		msg.ref.fail(msg, errMsg.Err)
 
