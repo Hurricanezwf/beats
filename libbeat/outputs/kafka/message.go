@@ -38,6 +38,9 @@ type message struct {
 	partition int32
 
 	data publisher.Event
+
+	// BY ZWF;
+	produceAt time.Time
 }
 
 var kafkaMessageKey interface{} = int(0)
