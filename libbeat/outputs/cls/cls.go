@@ -340,7 +340,7 @@ func (c *cls) generatePackageID() string {
 // str is format of: fmt.Sprintf("%s-%d", ip, time.Now().UnixNano())
 func generateProducerHash(str string) string {
 	table := crc64.MakeTable(crc64.ECMA)
-	hash := crc64.Checksum([]byte(instanceID), table)
+	hash := crc64.Checksum([]byte(str), table)
 	hashString := fmt.Sprintf("%08x", hash)
 	return strings.ToUpper(fmt.Sprintf("%s%08x", hashString, time.Now().Unix()))
 }
